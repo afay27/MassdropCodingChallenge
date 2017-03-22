@@ -1,119 +1,114 @@
-/*
-  Create a job queue whose workers fetch data from a URL and store the results in a database.  The job queue should expose a REST API for adding jobs and checking their status / results.
-
-  Example:
-
-  User submits www.google.com to your endpoint.  The user gets back a job id. Your system fetches www.google.com (the result of which would be HTML) and stores the result.  The user asks for the status of the job id and if the job is complete, he gets a response that includes the HTML for www.google.com
-*/
 'use strict';
 
 let redisConfig; 
 
-//setup redis-would still work wihtout this probably, but it's good practice
-if (process.env.NODE_ENV === 'production') {  
-  redisConfig = {
-    redis: {
-      port: process.env.REDIS_PORT,
-      host: process.env.REDIS_HOST,
-      auth: process.env.REDIS_PASS,
-      options: {
-        no_ready_check: false
-      }
-    }
-  };
-} else {
-  redisConfig = {};
-}
-
-//necessary dependencies
-var express = require('express')
-var bodyParser = require('body-parser')
-
-var app = express(),
+// boilerplate
+var express = require('express'),
+    app = express(), // express setup
+    bodyParser = require('body-parser'),
     http = require("http"),
-    https = require("https"),
-    content = "",
+    https = require("https"), // allows for pulling of webpage data
     redis = require('redis'),
-    client = redis.createClient();
-    client.get('id', function(err, reply) {
-      if (err || reply === null) {
-        client.set('id', '1');
-      }
-    });
-const kue = require('kue'),
-      queue = kue.createQueue(redisConfig); 
+    client = redis.createClient(), // allow access to redis server
+    kue = require('kue'), // job queue utility
+    queue = kue.createQueue(redisConfig); 
 
-app.use( bodyParser.json() );       // to support JSON-encoded bodies
-app.use(bodyParser.urlencoded({     // to support URL-encoded bodies
+// allows routes to accept json body text
+app.use( bodyParser.json() );       
+app.use(bodyParser.urlencoded({     
   extended: true
 })); 
 
-//route to accept incoming URL processing requests
+
+// gets current id, a.k.a. number of jobs processed thus far
 var reply1 = "";
 client.get('id', function(err, reply) {
-      reply1 = reply;
-    });
+  if(err || reply === null) { 
+    client.set('id', "1");
+    reply1 = "1";
+  } else {
+    reply1 = reply;
+  }
+})
+//**API**
 
+//route to accept incoming URL processing requests
 app.post('/makeJob', function (req, res) {
-  var job = queue.create('request', req.body.url)
+  // let user know the job is being processed
+  if (req.body.url != null && req.body.url != "") {
+    queue.create('request', req.body.url)
     .priority('critical')
     .save();
-  res.send("Thanks! Your job id is " + reply1 + "\n");
-  var stringAsInt = parseInt(reply1) + 1;
-  var string1 = stringAsInt.toString();
-  client.set('id', string1);
-  client.get('id', function(err, reply) {
-      reply1 = reply;
-    });
+    
+    // associated url with its unique id
+    client.set(req.body.url, reply1);
+    
+    res.send("Thanks! Your job ID is " + reply1 + "\n");
+    
+    // takes current id (stored as a string), converts to int, appends, and sets id to that new value (sorry this is a bit hacky, but it seemed like an effective method)
+    var stringAsInt = parseInt(reply1) + 1;
+    reply1 = stringAsInt.toString();
+    client.set('id', reply1);
+  } else {
+    res.send("Sorry, that is not a valid query. Please try again.\n");
+  }
 })
 
+// route to get current status of job
 app.post('/jobStatus', function(req, res) {
-  client.get(req.body.id, function(err, reply) {
-    const respond = {
-      url : 'google.com',
-      html: reply
+  // if job id not in db, return error message and exit
+  client.lrange(req.body.id, 0, -1, function(err, reply) {
+    if (reply == null || reply == "") {
+      res.send("Sorry, that job ID is not in our database. Please try again.\n");
     }
-    res.send(respond);
-  })
+    // if job still processing, return response with processing message
+    else if(reply[1] === null) {
+      var respond = {
+        url : reply[0],
+        status: "Job still processing",
+        html: "..."
+      }
+      res.send(respond)
+    } 
+    // else, return a json with url, status of job (completed), and the html pulled from url
+    else {
+      console.log("got here");
+      var respond = {
+        url : reply[0],
+        status: "Job completed",
+        html: reply[1]
+      }
+      res.send(respond);
+    }
+});
 })
+
 // listen for incoming connections
 app.listen(3000, function () {
   console.log('Listening on port 3000')
 })
 
-//job queue created using kue
-queue.watchStuckJobs(1000 * 10);
-
-queue.on('ready', () => {  
-  console.info('Queue is ready!');
-});
-
-queue.on('error', (err) => {  
-  console.error('There was an error in the main queue!');
-  console.error(err);
-  console.error(err.stack);
-});
-
-
-function requestURL(data, done) {  
-  queue.create('request', data)
-    .priority('critical')
-    .save();
-}
-
-// Process up to 20 jobs concurrently
-queue.process('request', 20, function(request, done){
+// processes up to 10 jobs as they come in
+queue.process('request', 10, function(request, done){
+  // stores chunked html data from url
+  var htmlContent = "";
+  
+  // checks whether url is http or https and directs to respective function
   if (request.data[4] == "s") {
     fetchHTTPSURLData(request.data);
   } else {
     fetchHTTPURLData(request.data);
   }
+  // standard http(s) request
   function fetchHTTPSURLData(url) {
     https.get(url, function(res){
         res.on('data', function (chunk) {
-              content += chunk;
+              htmlContent += chunk;
          });
         res.on('end', function () {
+          client.get(url, function(err, reply) {
+            client.rpush([reply, url, htmlContent]);
+          });
           done && done();
         });
 
@@ -122,106 +117,16 @@ queue.process('request', 20, function(request, done){
   function fetchHTTPURLData(url) {
     http.get(url, function(res){
         res.on('data', function (chunk) {
-              content += chunk;
+              htmlContent += chunk;
          });
         res.on('end', function () {
-          var curID = parseInt(reply1) - 1;
-          var curIDString = curID.toString();
-          client.set(curIDString, content);
+          client.get(url, function(err, reply) {
+            console.log(htmlContent);
+            client.rpush([reply, url, htmlContent]);
+          });
           done && done();
         });
 
     });
   }
 });
-
-module.exports = {  
-  create: (data, done) => {
-    requestURL(data, done);
-  }
-};
-
-/*'use strict';
-let redisConfig;  
-if (process.env.NODE_ENV === 'production') {  
-  redisConfig = {
-    redis: {
-      port: process.env.REDIS_PORT,
-      host: process.env.REDIS_HOST,
-      auth: process.env.REDIS_PASS
-    }
-  };
-} else {
-  redisConfig = {};
-}
-var kue = require('kue'), 
-    jobs = kue.createQueue();  
-var util = require("util"),
-    http = require("http"),
-    https = require("https");
-
-const router = require('express').Router();
-
-router.post('/', (req, res, next) => {  
-  // our future code will go here
-});
-
-module.exports = router;  
-
-var url = process.argv[2];
-//console.log("got url: " + url);
-
-var job = jobs.create('url_request', {
-  name: url
-}).priority('high').save();
-
-var content = "";
-
-jobs.process('url_request', function(job, done) {
-  if (job.data.name[4] == "s") {
-    fetchHTTPSURLData(job.data.name);
-  } else {
-    fetchHTTPURLData(job.data.name);
-  }
-  function fetchHTTPSURLData(url) {
-    https.get(url, function(res){
-       // console.log('Response is ' + res.statusCode);
-
-        res.on('data', function (chunk) {
-             // console.log('BODY: ' + chunk);
-              content += chunk;
-         });
-
-        res.on('end', function () {
-           //  console.log(content);
-          done && done();
-        });
-
-    });
-  }
-  function fetchHTTPURLData(url) {
-    http.get(url, function(res){
-       // console.log('Response is ' + res.statusCode);
-
-        res.on('data', function (chunk) {
-             // console.log('BODY: ' + chunk);
-              content += chunk;
-         });
-
-        res.on('end', function () {
-           //  console.log(content);
-          done && done();
-        });
-
-    });
-  }
-});
-job.on('complete', function() {
-  console.log("Completed Job:\n\n" + content);
-  process.exit(0);
-  } 
-)
-.on('failed', function(errorMessage){
-  console.log("job failed");
-  }
-); */
