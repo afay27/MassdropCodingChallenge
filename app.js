@@ -65,7 +65,7 @@ app.post('/jobStatus', function(req, res) {
         status: "Job still processing",
         html: "..."
       }
-      res.send(respond)
+      res.send(respond);
     } 
     // else, return a json with url, status of job (completed), and the html pulled from url
     else {
