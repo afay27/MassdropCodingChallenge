@@ -70,8 +70,8 @@ app.post('/makeJob', function (req, res) {
 app.post('/jobStatus', function(req, res) {
   client.get(req.body.id, function(err, reply) {
     const respond = {
-      url: 'google.com',
-      html: reply.substring(0, 50)
+      url : 'google.com',
+      html: reply
     }
     res.send(respond);
   })
