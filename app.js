@@ -1,7 +1,3 @@
-'use strict';
-
-let redisConfig; 
-
 // boilerplate
 var express = require('express'),
     app = express(), // express setup
@@ -11,7 +7,7 @@ var express = require('express'),
     redis = require('redis'),
     client = redis.createClient(), // allow access to redis server
     kue = require('kue'), // job queue utility
-    queue = kue.createQueue(redisConfig); 
+    queue = kue.createQueue(); 
 
 // allows routes to accept json body text
 app.use( bodyParser.json() );       
@@ -30,7 +26,8 @@ client.get('id', function(err, reply) {
     reply1 = reply;
   }
 })
-//**API**
+
+//**API ROUTES**
 
 //route to accept incoming URL processing requests
 app.post('/makeJob', function (req, res) {
@@ -72,7 +69,6 @@ app.post('/jobStatus', function(req, res) {
     } 
     // else, return a json with url, status of job (completed), and the html pulled from url
     else {
-      console.log("got here");
       var respond = {
         url : reply[0],
         status: "Job completed",
@@ -82,6 +78,8 @@ app.post('/jobStatus', function(req, res) {
     }
 });
 })
+
+// **END API ROUTES**
 
 // listen for incoming connections
 app.listen(3000, function () {
@@ -99,13 +97,14 @@ queue.process('request', 10, function(request, done){
   } else {
     fetchHTTPURLData(request.data);
   }
-  // standard http(s) request
+  // standard http(s) request (Note: these probably could be combined into one function)
   function fetchHTTPSURLData(url) {
     https.get(url, function(res){
         res.on('data', function (chunk) {
               htmlContent += chunk;
          });
         res.on('end', function () {
+          // pushes a list containing relevant url info into redis db
           client.get(url, function(err, reply) {
             client.rpush([reply, url, htmlContent]);
           });
@@ -120,8 +119,8 @@ queue.process('request', 10, function(request, done){
               htmlContent += chunk;
          });
         res.on('end', function () {
+          // pushes a list containing relevant info into redis db
           client.get(url, function(err, reply) {
-            console.log(htmlContent);
             client.rpush([reply, url, htmlContent]);
           });
           done && done();
