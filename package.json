@@ -1,0 +1,15 @@
+{
+  "name": "massdrop_coding_challenge",
+  "version": "1.0.0",
+  "description": "Job queue project for Massdrop",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.15.2",
+    "kue": "^0.11.5"
+  }
+}
