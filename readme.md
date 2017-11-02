@@ -1,6 +1,6 @@
 ## Job Queue
 
-This is my submission for the Massdrop's job queue project. I implemented this using Node.js, Express, Redis, and Kue. 
+This is my submission for a job queue coding challenge. I implemented this using Node.js, Express, Redis, and Kue. 
 
 ### Prerequisites
 1. Have Node.js installed
